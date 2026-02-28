@@ -22,11 +22,10 @@ struct InventorySyncResult {
 // Reads and writes to the Inventory app's SwiftData store via the shared
 // CloudKit container iCloud.com.applebytechnical.inventory.
 //
-// IMPORTANT — No automatic ID matching.
-// The PAT app stores data from multiple companies. The mapping from a PAT
-// record to an Inventory Asset is ALWAYS provided explicitly by the user via
-// the SyncMappingView sheet. The ID-suggestion logic in SyncMappingView is
-// only a hint and can be overridden before anything is written.
+// Automatic ID matching: when the user taps "Sync to Inventory", each selected
+// PAT record is matched to an Inventory Asset by asset ID (leading-zero tolerant).
+// Records with no matching asset are skipped and reported as "unmatched".
+// Duplicate records (same asset + same calendar day) are also skipped.
 //
 // Field mapping: PATRecord → Inventory PATTest
 //   testDate               → date
@@ -47,9 +46,9 @@ struct InventorySyncResult {
 @MainActor
 enum InventorySync {
 
-    // MARK: - Sync explicitly-mapped (PATRecord, Asset) pairs
+    // MARK: - Sync auto-matched (PATRecord, Asset) pairs
     //
-    // Called after the user has confirmed every mapping in SyncMappingView.
+    // Called with pairs produced by auto-matching in syncToInventory().
     // Duplicate records (same asset + same calendar day) are skipped, not errors.
 
     static func syncMapped(pairs: [(PATRecord, Asset)], in context: ModelContext) -> InventorySyncResult {
@@ -121,12 +120,11 @@ enum InventorySync {
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    // MARK: - ID-suggestion helper (used only for hints in SyncMappingView)
+    // MARK: - ID-matching helper
     //
-    // Attempts to find a matching Asset by assetId, handling leading-zero
-    // mismatches (e.g. "0006" ↔ "6"). Returns nil if no match found.
-    // The result is presented to the user as a suggestion — it is never
-    // applied automatically.
+    // Finds a matching Asset by assetId, handling leading-zero mismatches
+    // (e.g. "0006" ↔ "6"). Returns nil if no match found.
+    // Used by syncToInventory() to auto-match PAT records to Inventory assets.
 
     static func suggestAsset(for patAssetId: String, among assets: [Asset]) -> Asset? {
         let stripped = patAssetId.trimmingCharacters(in: CharacterSet(charactersIn: "0"))

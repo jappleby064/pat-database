@@ -46,8 +46,6 @@ struct ContentView: View {
     @Environment(\.inventoryModelContext) private var inventoryModelContext
     @State private var syncAlertMessage: String? = nil
     @State private var showSyncAlert = false
-    @State private var showSyncMapping = false
-    @State private var inventoryAssetsCache: [Asset] = []
 
     // ── Delete ────────────────────────────────────────────────
     @State private var showDeleteConfirm = false
@@ -183,16 +181,6 @@ struct ContentView: View {
         .sheet(isPresented: $showPDFPreview) {
             if let url = pdfURL { PDFPreviewView(url: url) }
         }
-        .sheet(isPresented: $showSyncMapping) {
-            if let ctx = inventoryModelContext {
-                SyncMappingView(
-                    patRecords: selectedRecords,
-                    inventoryAssets: inventoryAssetsCache,
-                    inventoryContext: ctx,
-                    onComplete: handleSyncComplete
-                )
-            }
-        }
         .alert("Inventory Sync", isPresented: $showSyncAlert) {
             Button("OK") {}
         } message: {
@@ -315,16 +303,6 @@ struct ContentView: View {
         .sheet(isPresented: $showPDFPreview) {
             if let url = pdfURL { PDFPreviewView(url: url) }
         }
-        .sheet(isPresented: $showSyncMapping) {
-            if let ctx = inventoryModelContext {
-                SyncMappingView(
-                    patRecords: selectedRecords,
-                    inventoryAssets: inventoryAssetsCache,
-                    inventoryContext: ctx,
-                    onComplete: handleSyncComplete
-                )
-            }
-        }
         .alert("Inventory Sync", isPresented: $showSyncAlert) {
             Button("OK") {}
         } message: {
@@ -375,15 +353,32 @@ struct ContentView: View {
             showFlash("Inventory not connected — sign in to iCloud and ensure the Inventory container is enabled in Settings.", isError: true)
             return
         }
-        // Load the current asset list fresh, then open the mapping sheet.
-        // The user manually assigns each PAT record to an Inventory asset
-        // before anything is written.
-        inventoryAssetsCache = InventorySync.fetchAssets(in: invCtx)
-        showSyncMapping = true
-    }
 
-    private func handleSyncComplete(_ result: InventorySyncResult) {
-        syncAlertMessage = result.summary
+        // Fetch all Inventory assets once.
+        let assets = InventorySync.fetchAssets(in: invCtx)
+
+        // Auto-match each selected PAT record to an Inventory asset by ID.
+        var pairs: [(PATRecord, Asset)] = []
+        var unmatched = 0
+        for record in selectedRecords {
+            if let asset = InventorySync.suggestAsset(for: record.assetId, among: assets) {
+                pairs.append((record, asset))
+            } else {
+                unmatched += 1
+            }
+        }
+
+        // Sync all matched pairs (duplicates are skipped inside syncMapped).
+        let result = InventorySync.syncMapped(pairs: pairs, in: invCtx)
+
+        // Build summary message.
+        var parts: [String] = []
+        if result.synced > 0    { parts.append("\(result.synced) synced") }
+        if result.skipped > 0   { parts.append("\(result.skipped) duplicate(s) skipped") }
+        if unmatched > 0        { parts.append("\(unmatched) unmatched") }
+        if !result.errors.isEmpty { parts.append("\(result.errors.count) error(s)") }
+
+        syncAlertMessage = parts.isEmpty ? "Nothing to sync." : parts.joined(separator: ", ")
         if !result.errors.isEmpty {
             syncAlertMessage! += "\n\nErrors:\n" + result.errors.prefix(5).joined(separator: "\n")
         }

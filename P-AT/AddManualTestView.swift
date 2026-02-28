@@ -6,110 +6,129 @@ struct AddManualTestView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var record: PATRecord = {
-        let r = PATRecord(assetId: "", site: "Manual Entry", user: "User")
-        r.patClass = "I"
-        r.visualResult = "PASS"
-        return r
-    }()
+    // MARK: - Form state (plain @State avoids SwiftData observation issues pre-insertion)
+    @State private var assetId = ""
+    @State private var testDate = Date()
+    @State private var inspector = "James Appleby"
+    @State private var site = "Manual Entry"
+    @State private var patClass = "I"
+    @State private var visualResult = "PASS"
+
+    // Measurements
+    @State private var bondResult = ""
+    @State private var insulationResult = ""
+    @State private var loadVA = ""
+    @State private var touchCurrent = ""
+    @State private var substituteLeakage = ""
+
+    // IEC Lead specific
+    @State private var iecFuse = "PASS"
+    @State private var iecBond = ""
+    @State private var iecInsu = ""
+
+    @State private var note = ""
 
     let patClasses = ["I", "I(IT)", "II", "II(IT)", "IEC Lead", "N/A"]
-    let testResults = ["PASS", "FAIL", "N/A"]
 
+    // MARK: - Field visibility (matches Inventory app / Flask app rules)
+    var showEarthBond: Bool  { ["I", "I(IT)", "IEC Lead"].contains(patClass) }
+    var showInsulation: Bool { patClass != "N/A" }
+    var showLoad: Bool       { ["I", "II"].contains(patClass) }
+    var showTouch: Bool      { ["II", "II(IT)"].contains(patClass) }
+    var showIEC: Bool        { patClass == "IEC Lead" }
+    var showNone: Bool       { patClass == "N/A" }
+
+    var overallResult: String {
+        if visualResult == "FAIL" { return "FAIL" }
+        if showIEC && iecFuse == "FAIL" { return "FAIL" }
+        return "PASS"
+    }
+
+    // MARK: - Body
     var body: some View {
         NavigationStack {
             Form {
+
+                // MARK: Basic Information
                 Section("Basic Information") {
-                    TextField("Asset ID", text: $record.assetId)
+                    TextField("Asset ID", text: $assetId)
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.characters)
                         #endif
-                    
-                    DatePicker("Test Date", selection: $record.testDate, displayedComponents: .date)
-                    
-                    TextField("Inspector", text: $record.user)
-                    TextField("Site", text: $record.site)
+
+                    DatePicker("Test Date", selection: $testDate, displayedComponents: .date)
+
+                    TextField("Inspector", text: $inspector)
+                    TextField("Site", text: $site)
                 }
 
+                // MARK: Test Parameters
                 Section("Test Parameters") {
-                    Picker("PAT Class", selection: Binding(
-                        get: { record.patClass ?? "I" },
-                        set: { record.patClass = $0 }
-                    )) {
+                    Picker("PAT Class", selection: $patClass) {
                         ForEach(patClasses, id: \.self) { Text($0).tag($0) }
                     }
-                    
-                    Picker("Visual Result", selection: Binding(
-                        get: { record.visualResult ?? "N/A" },
-                        set: { record.visualResult = $0 }
-                    )) {
-                        ForEach(["PASS", "FAIL", "N/A"], id: \.self) { Text($0).tag($0) }
+
+                    Picker("Visual Inspection", selection: $visualResult) {
+                        Text("PASS").tag("PASS")
+                        Text("FAIL").tag("FAIL")
+                        Text("N/A").tag("N/A")
                     }
                 }
 
-                Section("Electrical Measurements") {
-                    HStack {
-                        Text("Earth Bond (Ω)")
-                        Spacer()
-                        TextField("0.00", text: Binding(
-                            get: { record.bondResult ?? "" },
-                            set: { record.bondResult = $0 }
-                        ))
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                    }
+                // MARK: Electrical Measurements (dynamic)
+                if !showNone {
+                    Section("Electrical Measurements") {
 
-                    HStack {
-                        Text("Insulation (MΩ)")
-                        Spacer()
-                        TextField("0.00", text: Binding(
-                            get: { record.insulationResult ?? "" },
-                            set: { record.insulationResult = $0 }
-                        ))
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                    }
+                        // Earth Bond — Class I, I(IT), IEC Lead
+                        if showEarthBond {
+                            MeasurementRow(label: "Earth Bond (Ω)", placeholder: "0.00", value: $bondResult)
+                        }
 
-                    HStack {
-                        Text("Leakage (mA)")
-                        Spacer()
-                        TextField("0.00", text: Binding(
-                            get: { record.substituteLeakage ?? "" },
-                            set: { record.substituteLeakage = $0 }
-                        ))
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                    }
-                    
-                    HStack {
-                        Text("Load (VA)")
-                        Spacer()
-                        TextField("0.00", text: Binding(
-                            get: { record.loadVA ?? "" },
-                            set: { record.loadVA = $0 }
-                        ))
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
+                        // Insulation — all except N/A
+                        if showInsulation {
+                            MeasurementRow(label: "Insulation (MΩ)", placeholder: "0.00", value: $insulationResult)
+                        }
+
+                        // Load — Class I, II only
+                        if showLoad {
+                            MeasurementRow(label: "Load (VA)", placeholder: "0.00", value: $loadVA)
+                        }
+
+                        // Touch & Sub Leakage — Class II, II(IT)
+                        if showTouch {
+                            MeasurementRow(label: "Touch Current (mA)", placeholder: "0.00", value: $touchCurrent)
+                            MeasurementRow(label: "Sub Leakage (mA)", placeholder: "0.00", value: $substituteLeakage)
+                        }
+
+                        // IEC Lead specific
+                        if showIEC {
+                            Picker("IEC Fuse", selection: $iecFuse) {
+                                Text("PASS").tag("PASS")
+                                Text("FAIL").tag("FAIL")
+                            }
+                            MeasurementRow(label: "IEC Bond (Ω)", placeholder: "0.00", value: $iecBond)
+                            MeasurementRow(label: "IEC Insulation (MΩ)", placeholder: "0.00", value: $iecInsu)
+                        }
                     }
                 }
 
+                // MARK: Overall Result
                 Section("Overall Result") {
                     Picker("Final Status", selection: Binding(
-                        get: { record.visualResult == "FAIL" ? "FAIL" : "PASS" },
-                        set: { _ in } // Overall result is technically a computed property, we usually let it compute, but for manual override we could just set visualResult
+                        get: { overallResult },
+                        set: { visualResult = $0 }
                     )) {
-                        ForEach(testResults, id: \.self) { Text($0).tag($0) }
+                        Text("PASS").tag("PASS")
+                        Text("FAIL").tag("FAIL")
                     }
                     .pickerStyle(.segmented)
                 }
-                
+
+                // MARK: Notes
                 Section("Notes") {
-                    TextEditor(text: Binding(
-                        get: { record.note ?? "" },
-                        set: { record.note = $0 }
-                    ))
-                    .frame(minHeight: 80)
+                    TextEditor(text: $note)
+                        .frame(minHeight: 80)
                 }
             }
             .formStyle(.grouped)
@@ -122,22 +141,40 @@ struct AddManualTestView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        saveRecord()
-                    }
-                    .disabled(record.assetId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Save") { saveRecord() }
+                        .disabled(assetId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
         #if os(macOS)
-        .frame(width: 450, height: 600)
+        .frame(width: 480, height: 680)
         #endif
     }
 
+    // MARK: - Save
     private func saveRecord() {
-        record.assetId = record.assetId.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        modelContext.insert(record)
+        let r = PATRecord(
+            assetId: assetId.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+            site: site,
+            user: inspector,
+            testDate: testDate
+        )
+        r.patClass    = patClass
+        r.visualResult = visualResult
+        r.bondResult        = bondResult.isEmpty        ? nil : bondResult
+        r.insulationResult  = insulationResult.isEmpty  ? nil : insulationResult
+        r.loadVA            = loadVA.isEmpty            ? nil : loadVA
+        r.touchCurrent      = touchCurrent.isEmpty      ? nil : touchCurrent
+        r.substituteLeakage = substituteLeakage.isEmpty ? nil : substituteLeakage
+        if showIEC {
+            r.iecFuse = iecFuse
+            r.iecBond = iecBond.isEmpty ? nil : iecBond
+            r.iecInsu = iecInsu.isEmpty ? nil : iecInsu
+        }
+        r.note = note.isEmpty ? nil : note
+        modelContext.insert(r)
         try? modelContext.save()
         dismiss()
     }
 }
+
